@@ -32,20 +32,22 @@ auth_v2 = {'bearer_token':bearer_token,'consumer_key':consumer_key,'consumer_sec
 client = tweepy.Client(**auth_v2)
 
 
-def get_dm_participants(username):
+def get_dm_participants_v2(username):
     me = client.get_me().data
     contact = get_user_v2(username)
     return me,contact
 
-def get_dms_v2(username):
+def get_dms_v2(username,reverse=False):
     # Params: username
     # Returns: Generates json file containing all dms with the specified contact,in reverse chronological order
-    me,contact = get_dm_participants(username)
+    me,contact = get_dm_participants_v2(username)
     participants = {me.id:me.username,contact.id:contact.username}
     request = client.get_direct_message_events
     params = {'participant_id': contact.id, 'expansions':'sender_id', 'dm_event_fields':'created_at'}
     dms = get_all_pages_v2(request,params)
     data = [{"sender":participants[dm.sender_id],"text":dm.text,"date":dm.created_at.strftime('%Y-%m-%d %H:%M:%S')} for dm in dms]
+    if reverse:
+        data = list(reversed(data))
     with open(f'output/dms_{contact.username}.json','w',encoding='utf8') as output_file:
             json.dump(data,output_file,indent=4,ensure_ascii=False)
     print("DMs file successfully generated")
@@ -106,4 +108,4 @@ def get_all_pages_v2(request,params):
 # print(desired_username in [user.username for user in liking_users_list])
 
 # ---------------------------------------------- DMs ----------------------------------------------------------
-get_dms_v2(username="elonmusk")
+get_dms_v2(username="eltomstore",reverse=True)
