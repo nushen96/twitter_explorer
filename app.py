@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import openai
+import numpy as np
 
 def get_config():
     try:
@@ -34,19 +35,55 @@ auth_v2 = {'bearer_token':bearer_token,'consumer_key':consumer_key,'consumer_sec
 # --------- V2 -----------
 client = tweepy.Client(**auth_v2)
 
-def classify_tweet_sentiment(tweet):
+def get_list_chunks(complete_list, chunk_size=3):
+    return [list(chunk) for chunk in np.array_split(complete_list,len(complete_list)//chunk_size+1)]
+
+# def classify_tweet_sentiment(tweet):
+#     response = openai.Completion.create(
+#         engine="text-davinci-002",
+#         prompt=f"What is the sentiment (positive, negative or neutral) of the following tweet: {tweet}. Just tell me the sentiment in one word without any whitespace or line-break.",
+#         temperature=0.5,
+#         max_tokens=1024,
+#         top_p=1,
+#         frequency_penalty=0,
+#         presence_penalty=0
+#     )
+
+#     sentiment = response["choices"][0]["text"]
+#     return sentiment.strip().lower()
+
+
+
+# def calculate_tweets_negativity_percentage(tweets):
+#     negative_tweets = []
+#     for tweet in tweets:
+#         sentiment = classify_tweet_sentiment(tweet)=='negative'
+#         if sentiment == 'negative':
+#             negative_tweets.append(sentiment)
+#         time.sleep(1)
+#     negativity = len([tweet for tweet in tweets if classify_tweet_sentiment(tweet)=='negative'])/len(tweets)
+#     return negativity
+
+def classify_tweets_sentiment(tweets):
+    tweets_prompt='\n'.join([f'{idx+1}. {tweet}' for idx,tweet in enumerate(tweets)])
+    print(tweets_prompt)
     response = openai.Completion.create(
         engine="text-davinci-002",
-        prompt=f"What is the sentiment (positive, negative or neutral) of the following tweet: {tweet}. Just tell me the sentiment in one word without any whitespace or line-break.",
-        temperature=0.5,
-        max_tokens=1024,
+        # prompt=f"What is the sentiment (positive, negative or neutral) of each of the following tweets:\n {tweets_prompt}. \nShow the sentiments in a numbered list and in lowercase.",
+        prompt=f"Classify the sentiment in these tweets (positive, negative or neutral) in lowercase:\n\n{tweets_prompt}\n\nTweet sentiment ratings:",
+        temperature=0,
+        max_tokens=2048,
         top_p=1,
         frequency_penalty=0,
         presence_penalty=0
     )
+    print(response)
+    sentiments = [sentiment.split()[-1].lower() for sentiment in response["choices"][0]["text"].strip().split('\n')]
+    return sentiments
 
-    sentiment = response["choices"][0]["text"]
-    return sentiment.strip()
+def calculate_negativity_percentage(sentiments):
+    negativity = sentiments.count('negative')/len(sentiments)
+    return negativity
 
 def get_dm_participants_v2(username):
     me = client.get_me().data
@@ -138,15 +175,15 @@ def calculate_tweet_sauce_probability(tweet_id):
     tweet = client.get_tweet(tweet_id,tweet_fields=['public_metrics','author_id']).data
     like_count = tweet.public_metrics['like_count']
     quote_count = tweet.public_metrics['quote_count']
-    user = client.get_user(id=tweet.author_id,user_fields=['public_metrics']).data
-    followers_count = user.public_metrics['followers_count']
-    probability = 0.0
+    quotes = [tweet.text.replace(tweet.text.split()[-1],'').rstrip() for tweet in tweepy.Paginator(client.get_quote_tweets, tweet_id, max_results=100,limit=5).flatten(limit=5000)]
+    quotes_chunks = get_list_chunks(quotes,5)
+    sentiments = []
+    for chunk in quotes_chunks:
+        sentiments+=classify_tweets_sentiment(chunk)
+    probability = calculate_negativity_percentage(sentiments)
     quote_like_ratio = quote_count/like_count if like_count>0 else quote_count/1
-    if quote_count>10:
-        probability+=0.1
+    if probability>0.5 and quote_count>10 and quote_like_ratio>2:
         probability+=(quote_like_ratio//2)*0.1
-    if probability>0.5:
-        probability+=1000*0.5/followers_count
     return min(probability,1.0)
 
 def get_all_pages_v2(request,params):
@@ -204,8 +241,11 @@ tweet_id = '1572793408565157889'
 # print(*get_latest_dms(reverse=True),sep='\n')
 # me = client.get_me().data
 # ---------------------------------------------- SAUCE ----------------------------------------------------------
+sauced_tweet_id = '1608425890828161025'
 # print(calculate_tweet_sauce_probability('1608425890828161025'))
 test_tweets = ["I can't stand homework","This sucks. I'm bored 😠","I can't wait for Halloween!!!","My cat is adorable ❤️❤️"
-,"I hate chocolate"]
-for tweet in test_tweets:
-    print(classify_tweet_sentiment(tweet))
+,"I hate chocolate","I love my wife."]
+# classify_tweets_sentiment(test_tweets)
+# for tweet in test_tweets:
+#     print(classify_tweet_sentiment(tweet))
+print(calculate_tweet_sauce_probability(sauced_tweet_id))
