@@ -4,6 +4,8 @@ import random
 import json
 import os
 import sys
+import time
+import openai
 
 def get_config():
     try:
@@ -20,6 +22,7 @@ consumer_secret = api_config['CONSUMER_SECRET']
 access_token = api_config['ACCESS_TOKEN']
 access_token_secret = api_config['ACCESS_TOKEN_SECRET']
 bearer_token = api_config['BEARER_TOKEN']
+openai.api_key = api_config['OPENAI_API_KEY']
 
 auth_v1 = tweepy.OAuth1UserHandler(
    consumer_key, consumer_secret,
@@ -31,26 +34,52 @@ auth_v2 = {'bearer_token':bearer_token,'consumer_key':consumer_key,'consumer_sec
 # --------- V2 -----------
 client = tweepy.Client(**auth_v2)
 
+def classify_tweet_sentiment(tweet):
+    response = openai.Completion.create(
+        engine="text-davinci-002",
+        prompt=f"What is the sentiment (positive, negative or neutral) of the following tweet: {tweet}. Just tell me the sentiment in one word without any whitespace or line-break.",
+        temperature=0.5,
+        max_tokens=1024,
+        top_p=1,
+        frequency_penalty=0,
+        presence_penalty=0
+    )
+
+    sentiment = response["choices"][0]["text"]
+    return sentiment.strip()
 
 def get_dm_participants_v2(username):
     me = client.get_me().data
     contact = get_user_v2(username)
     return me,contact
 
+def get_users_followings(user_id):
+    followings = [{'id':user.id, 'username':user.username} for user in tweepy.Paginator(client.get_users_following, user_id, max_results=1000,limit=5).flatten(limit=5000)]
+    # save_data_to_json(followings,'followings')
+    return followings
+        
 def get_dm_conversations():
     me = client.get_me().data
-    my_followings = get_all_pages_v2(client.get_users_following,{'id':me.id})
+    # my_followings = get_users_followings(me.id)
+    my_followings = get_json_data('output/followings.json')
     dm_contacts = []
     for user in my_followings:
-        conversation = client.get_direct_message_events(participant_id=user.id, max_results=1).data
+        conversation = client.get_direct_message_events(participant_id=user['id'], max_results=1).data
+        time.sleep(1)
         if conversation:
-            dm_contacts.append({'id':user.id, 'username':user.username})
+            dm_contacts.append({'id':user['id'], 'username':user['username']})
+            save_data_to_json(dm_contacts,'conversations')
     return dm_contacts
 
-def save_dict_to_json(data,filename):
+def save_data_to_json(data,filename):
     with open(f'output/{filename}.json','w',encoding='utf8') as output_file:
         json.dump(data,output_file,indent=4,ensure_ascii=False)
-    print("DMs file successfully generated")
+    print(f"File {filename}.json successfully generated")
+
+def get_json_data(file_path):
+    with open(file_path, 'r',encoding='utf8') as f:
+        data = json.load(f)
+        return data
 
 def get_dms_v2(username,reverse=False):
     # Params: username
@@ -63,10 +92,24 @@ def get_dms_v2(username,reverse=False):
     data = [{"sender":participants[dm.sender_id],"text":dm.text,"date":dm.created_at.strftime('%Y-%m-%d %H:%M:%S')} for dm in dms]
     if reverse:
         data = list(reversed(data))
-    save_dict_to_json(data,f'dms_{contact.username}')
+    save_data_to_json(data,f'dms_{contact.username}')
     # with open(f'output/dms_{contact.username}.json','w',encoding='utf8') as output_file:
     #         json.dump(data,output_file,indent=4,ensure_ascii=False)
     # print("DMs file successfully generated")
+
+def get_latest_dms(reverse=False):
+    me = client.get_me().data
+    dms_data = client.get_direct_message_events(expansions=['sender_id'],dm_event_fields=['created_at']).data
+    dms = []
+    for dm in dms_data:
+        if dm.sender_id == me.id:
+            username = me.username
+        else:
+            username = client.get_user(id=dm.sender_id).data.username
+        dms.append(f"{username}: {dm.text} --- {dm.created_at.strftime('%Y-%m-%d %H:%M:%S')}")
+    if reverse:
+        return list(reversed(dms))
+    return dms
 
 def get_tweet_likers(tweet_id):
     request = client.get_liking_users
@@ -111,6 +154,7 @@ def get_all_pages_v2(request,params):
     response = request(**params)
     data += response.data
     while 'next_token' in response.meta:
+        time.sleep(1)
         response = request(**params,pagination_token=response.meta['next_token'])
         if response.data:
             data += response.data
@@ -156,9 +200,12 @@ tweet_id = '1572793408565157889'
 # print(get_tweet_retweeters(tweet_id))
 
 # ---------------------------------------------- DMs ----------------------------------------------------------
-get_dms_v2(username="elonmusk",reverse=True)
-# print(get_dm_conversations())
-
-
+# get_dms_v2(username="polonium38",reverse=True)
+# print(*get_latest_dms(reverse=True),sep='\n')
+# me = client.get_me().data
 # ---------------------------------------------- SAUCE ----------------------------------------------------------
 # print(calculate_tweet_sauce_probability('1608425890828161025'))
+test_tweets = ["I can't stand homework","This sucks. I'm bored 😠","I can't wait for Halloween!!!","My cat is adorable ❤️❤️"
+,"I hate chocolate"]
+for tweet in test_tweets:
+    print(classify_tweet_sentiment(tweet))
